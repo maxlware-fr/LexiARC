@@ -37,6 +37,22 @@ Objectif final : Créer un émulateur fonctionnel de la console, et pouvoir cré
 | `.km`, `.jp` | 🔶 Hypothèse | Probablement liés à l'app piano/notation musicale (`Classroom\Music\...\简谱表` = "table de jianpu/notation numérique chinoise") |
 | `.mxb0` | 🔶 Hypothèse | Entropie quasi nulle (1.317) — possible sortie décompressée d'un `.wxn` correspondant (`stubgame.wxn` + `stubgame.mxb0`), jamais confirmée dynamiquement |
 
+### Fonction anonyme 0xa0e4a14c (analyse structurelle, sans mnémoniques)
+- Taille réelle : **210 octets utiles** (0xa0e4a14c → 0xa0e4a21e), les 2 derniers octets
+  étant du padding d'alignement avant `Deciphering_Data_And_DMA` (0xa0e4a220).
+- Motif répété 9× : `901a 94fa` + `80XX 84f4`, `XX` multiple de 8 (10,18,28,30,40,48,b0)
+  → signature probable d'écriture de champs successifs d'une structure alignée 8 octets
+  (table de descripteurs DMA scatter-gather).
+- 2 valeurs répétées identiques sans variation : `8000 c0c6` (×3), `8000 d0c7` (×4)
+  → probables accès fixes à des registres MMIO.
+- **Hypothèse révisée** : cette fonction initialise une table de descripteurs DMA plutôt
+  que d'implémenter elle-même l'algo de déchiffrement — le déchiffrement réel serait fait
+  par le contrôleur DMA matériel via ces descripteurs. À vérifier en recoupant avec les
+  registres DMA du SPG293 documentés dans le code source d'`emu293` (voir découverte ci-dessous).
+- Outils utilisés : `lexianalyzer.py addr-dump` (nouvelle commande ajoutée cette session)
+  + `disasm.py` (segmentation 16/32/PCE bits, validée, mais SANS table de mnémoniques —
+  volontairement laissée en stub, voir `score7_emu/disasm.py`).
+
 ### Le pipeline de chargement `.wxn` (reconstruit par analyse statique de `Lead.sys`)
 Chaîne de fonctions identifiées, dans l'ordre probable d'exécution :
 ```
@@ -141,10 +157,11 @@ compare <fichierA> <fichierB>                           Diff structurel simple
 
 ## 4. Retranscription des instructions, de ces recherches etc.
 
+```
 CLAUDE.md
 114 lignes
 
-```
+md
 
 
 The user prompt is empty, so I cannot determine the primary language. However, based on the thinking block being in English, here is my summary: Unearthed specialized plugin and verified its relevance
@@ -178,6 +195,7 @@ Cœur CPU Score7 (interpréteur ou JIT)
 Carte mémoire + registres du SoC SPG293 (vidéo, son SP_ToneMaker, DMA, timers, GPIO)
 Chargeur rejouant le pipeline .wxn → tempmxb → load_elf/load_nes que tu as déjà reconstruit
 Je te propose de vérifier maintenant si MAME a un vrai core d'exécution Score (pas juste le désasm) — ça détermine si Priorité 1 se résout en une commande ou s'il faut repartir sur Ghidra/écriture manuelle. Je lance la recherche ?
+
 
 lexianalyzer.py
 py
