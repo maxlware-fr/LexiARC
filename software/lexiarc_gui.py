@@ -13,40 +13,30 @@ from tkinter import messagebox, filedialog, simpledialog, ttk
 # Nécessite Pillow : pip install Pillow
 from PIL import Image, ImageTk
 
+import lexiarc_core as core
+from lexiarc_wizard import EmulationWizard
+
 # --- CONFIGURATION & CONSTANTES ---
 VERSION = "0.2.0-BETA"
 AUTEUR = "Maxlware"
 LICENCE = "Apache-2.0 License"
 DOCS_URL = "https://github.com/maxlware-fr/LexiARC/blob/main/docs/HOME.md"
 
-ICON_PATH = "logo.ico"      # Icône de la barre de titre
-LOGO_PATH = "logo.png"      # Logo pour l'écran d'accueil & splash screen
+ICON_PATH = str(core.RES_DIR / "logo.ico")      # Icône de la barre de titre
+LOGO_PATH = str(core.RES_DIR / "logo.png")      # Logo pour l'écran d'accueil & splash screen
 
-# --- Arborescence attendue du package (tout est relatif à ce script) ---
-#   LexiARC/
-#     lexiarc_gui.py        <- ce fichier
-#     lexianalyzer.py
-#     core/windows/Lead.sys <- BIOS console (bundlé avec le package)
-#     bin/
-#       emu293.exe + DLLs   <- exécutable emu293 compilé (bundlé avec le package)
-#       mtools/
-#         mcopy.exe, mdir.exe, mformat.exe, mmd.exe
-BASE_DIR = Path(__file__).resolve().parent
-BIN_DIR = BASE_DIR / "bin"
-EMU293_EXE = BIN_DIR / "emu293.exe"
-LEAD_SYS_PATH = BASE_DIR / "core" / "windows" / "Lead.sys"
-MTOOLS_DIR = BIN_DIR / "mtools"
+# Arborescence (voir lexiarc_core.py) : bin/emu293.exe + DLL, bin/mtools/mtools.exe,
+# emulations/ (images SD + .larc créés par l'assistant), logs/.
+# Lead.sys n'est plus "bundlé" : il est pris sur la carte SD de l'utilisateur.
+BASE_DIR = core.APP_DIR
+BIN_DIR = core.BIN_DIR
+EMU293_EXE = core.EMU293_EXE
+MTOOLS_DIR = core.MTOOLS_DIR
+core.ensure_mtools()
 MCOPY = MTOOLS_DIR / "mcopy.exe"
 MDIR = MTOOLS_DIR / "mdir.exe"
 MFORMAT = MTOOLS_DIR / "mformat.exe"
 MMD = MTOOLS_DIR / "mmd.exe"
-
-# Fichiers essentiels à vérifier au démarrage
-FICHIERS_ESSENTIELS = [
-    str(LEAD_SYS_PATH),
-    str(EMU293_EXE),
-    str(BASE_DIR / "lexianalyzer.py"),
-]
 
 
 class LexiARCApp:
@@ -73,29 +63,19 @@ class LexiARCApp:
                 print(f"[*] Impossible d'appliquer l'icône : {e}")
 
     def verifier_fichiers_essentiels(self):
-        """Vérifie la présence des composants nécessaires au démarrage"""
-        manquants = [f for f in FICHIERS_ESSENTIELS if not os.path.exists(f)]
-        if manquants:
-            fichiers_str = "\n".join(f"- {f}" for f in manquants)
-            messagebox.showwarning(
-                "Fichiers manquants",
-                f"Attention, certains composants essentiels sont introuvables :\n{fichiers_str}\n\n"
-                "L'émulation ne pourra pas se lancer tant que Lead.sys et emu293.exe "
-                "ne sont pas placés dans l'arborescence attendue (voir en-tête du script)."
-            )
-        if not MTOOLS_DIR.exists():
-            messagebox.showwarning(
-                "mtools manquant",
-                f"Le dossier mtools est introuvable :\n{MTOOLS_DIR}\n\n"
-                "Les fonctions Formatage / Implémentation / Éditeur de la carte SD "
-                "ne fonctionneront pas tant que mcopy/mdir/mformat n'y sont pas placés."
-            )
+        """Statut des dépendances (non bloquant : l'assistant permet de les installer)."""
+        self.statut_deps = ""
+        for d in core.check_dependencies():
+            if not d["ok"]:
+                self.statut_deps += f"⚠ {d['nom']} : manquant ({', '.join(d['manquants'][:3])}" + \
+                                    (", …" if len(d["manquants"]) > 3 else "") + ")\n"
 
     def creer_ecran_accueil(self):
         """Message par défaut affiché au lancement"""
         self.label_accueil = tk.Label(
             self.root,
-            text="Cliquez sur File pour commencer l'émulation",
+            text="Menu Fichier ▸ Créer une émulation, ou ▸ Lancer une émulation"
+                 + (("\n\n" + self.statut_deps.strip()) if self.statut_deps else ""),
             font=("Helvetica", 14, "italic"),
             fg="gray"
         )
@@ -107,14 +87,14 @@ class LexiARCApp:
     def creer_menu(self):
         menubar = tk.Menu(self.root)
 
-        # --- Menu FILE ---
+        # --- Menu FICHIER ---
         menu_file = tk.Menu(menubar, tearoff=0)
 
-        # Sous-menu Émulation
-        menu_emu = tk.Menu(menu_file, tearoff=0)
-        menu_emu.add_command(label="Créer une émulation", command=self.fenetre_creer_emulation)
-        menu_emu.add_command(label="Importer une émulation", command=self.action_importer_emulation)
-        menu_file.add_cascade(label="Émulation", menu=menu_emu)
+        # Sous-menu Créer une émulation
+        menu_creer = tk.Menu(menu_file, tearoff=0)
+        menu_creer.add_command(label="Créer une nouvelle émulation", command=self.fenetre_creer_emulation)
+        menu_file.add_cascade(label="Créer une émulation", menu=menu_creer)
+        menu_file.add_command(label="Lancer une émulation", command=self.action_lancer_emulation)
 
         # Sous-menu Compilation
         menu_comp = tk.Menu(menu_file, tearoff=0)
@@ -124,7 +104,7 @@ class LexiARCApp:
 
         menu_file.add_separator()
         menu_file.add_command(label="Quitter", command=self.root.quit)
-        menubar.add_cascade(label="File", menu=menu_file)
+        menubar.add_cascade(label="Fichier", menu=menu_file)
 
         # --- Menu IMPLÉMENTATION ---
         menu_implementation = tk.Menu(menubar, tearoff=0)
@@ -155,108 +135,38 @@ class LexiARCApp:
     def ouvrir_documentation(self):
         webbrowser.open(DOCS_URL)
 
-    def action_importer_emulation(self):
-        filename = filedialog.askopenfilename(filetypes=[("Configuration LexiARC", "*.larc")])
-        if not filename:
-            return
+    def action_lancer_emulation(self):
+        """Fichier ▸ Lancer une émulation : choisir un .larc puis lancer."""
+        filename = filedialog.askopenfilename(
+            title="Choisir le fichier d'émulation",
+            initialdir=str(core.EMULATIONS_DIR) if core.EMULATIONS_DIR.exists() else None,
+            filetypes=[("Configuration LexiARC", "*.larc")])
+        if filename:
+            self.lancer_larc(filename)
+
+    def lancer_larc(self, chemin):
         try:
-            with open(filename, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            sd_path = config.get("image_sd_path", "")
-            if not os.path.exists(sd_path):
-                messagebox.showerror("Erreur Import", f"L'image SD spécifiée est introuvable :\n{sd_path}")
-                return
-            self.ouvrir_ecran_emulation(config)
+            config = core.load_larc(chemin)
         except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de lire le fichier de configuration : {e}")
+            messagebox.showerror("Erreur", f"Impossible de lire le fichier .larc :\n{e}")
+            return
+        problemes = core.pre_launch_check(config)
+        if problemes:
+            messagebox.showerror("Lancement impossible", "\n\n".join("• " + p for p in problemes) +
+                                 "\n\nFichier ▸ Créer une émulation ▸ étape 4 permet d'installer les dépendances.")
+            return
+        self.ouvrir_ecran_emulation(config)
 
     # ----------------------------------------------------------------------
     # Fenêtre : créer une émulation
     # ----------------------------------------------------------------------
     def fenetre_creer_emulation(self):
-        win = tk.Toplevel(self.root)
-        win.title("Créer une configuration d'émulation")
-        win.geometry("450x350")
-        if os.path.exists(ICON_PATH):
-            try:
-                win.iconbitmap(ICON_PATH)
-            except Exception:
-                pass
-        win.grab_set()
-
-        var_nom = tk.StringVar(value="Lexibook JG7420AV")
-        var_auteur = tk.StringVar(value=AUTEUR)
-        var_cpu = tk.StringVar(value="Sunplus S+core (Score7)")
-        var_ram = tk.StringVar(value="32MB")
-        var_sd = tk.StringVar()
-
-        ttk.Label(win, text="Nom de l'émulateur :").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        ttk.Entry(win, textvariable=var_nom, width=30).grid(row=0, column=1, padx=10, pady=10)
-
-        ttk.Label(win, text="Auteur du profil :").grid(row=1, column=0, padx=10, pady=10, sticky="w")
-        ttk.Entry(win, textvariable=var_auteur, width=30).grid(row=1, column=1, padx=10, pady=10)
-
-        ttk.Label(win, text="Type de processeur :").grid(row=2, column=0, padx=10, pady=10, sticky="w")
-        box_cpu = ttk.Combobox(win, textvariable=var_cpu, values=["Sunplus S+core (Score7)", "Sunplus unSP", "MIPS"], width=27)
-        box_cpu.grid(row=2, column=1, padx=10, pady=10)
-        box_cpu.current(0)
-
-        ttk.Label(win, text="Taille de la RAM :").grid(row=3, column=0, padx=10, pady=10, sticky="w")
-        box_ram = ttk.Combobox(win, textvariable=var_ram, values=["8MB", "16MB", "32MB", "64MB"], width=27)
-        box_ram.grid(row=3, column=1, padx=10, pady=10)
-        box_ram.current(2)
-
-        ttk.Label(win, text="Image carte SD (.img) :").grid(row=4, column=0, padx=10, pady=10, sticky="w")
-        btn_frame = ttk.Frame(win)
-        btn_frame.grid(row=4, column=1, padx=10, pady=10, sticky="w")
-        ttk.Entry(btn_frame, textvariable=var_sd, width=20).pack(side="left")
-
-        def parcourir_sd():
-            filename = filedialog.askopenfilename(filetypes=[("Image Disque", "*.img"), ("Tous les fichiers", "*.*")])
-            if filename:
-                var_sd.set(filename)
-        ttk.Button(btn_frame, text="...", width=3, command=parcourir_sd).pack(side="left", padx=5)
-
-        def lancer_directement():
-            if not var_nom.get() or not var_sd.get():
-                messagebox.showerror("Erreur", "Veuillez renseigner un nom et l'emplacement de l'image SD.")
-                return
-            config_data = {
-                "nom_emulateur": var_nom.get(),
-                "auteur_profil": var_auteur.get(),
-                "architecture_cpu": var_cpu.get(),
-                "taille_ram": var_ram.get(),
-                "image_sd_path": var_sd.get()
-            }
-            win.destroy()
-            self.ouvrir_ecran_emulation(config_data)
-
-        def sauvegarder_larc():
-            if not var_nom.get() or not var_sd.get():
-                messagebox.showerror("Erreur", "Veuillez renseigner un nom et l'emplacement de l'image SD.")
-                return
-            config_data = {
-                "nom_emulateur": var_nom.get(),
-                "auteur_profil": var_auteur.get(),
-                "architecture_cpu": var_cpu.get(),
-                "taille_ram": var_ram.get(),
-                "image_sd_path": var_sd.get()
-            }
-            dest_file = filedialog.asksaveasfilename(
-                defaultextension=".larc",
-                filetypes=[("Configuration LexiARC", "*.larc")],
-                initialfile=f"{var_nom.get().replace(' ', '_').lower()}.larc"
-            )
-            if dest_file:
-                with open(dest_file, "w", encoding="utf-8") as f:
-                    json.dump(config_data, f, indent=4, ensure_ascii=False)
-                messagebox.showinfo("Export réussi", f"Fichier de configuration exporté avec succès :\n{dest_file}")
-                win.destroy()
-
-        frame_boutons = ttk.Frame(win)
-        frame_boutons.grid(row=5, column=0, columnspan=2, pady=20)
-        ttk.Button(frame_boutons, text="Lancer l'émulation", command=lancer_directement).pack(side="left", padx=5)
-        ttk.Button(frame_boutons, text="Exporter en .larc", command=sauvegarder_larc).pack(side="left", padx=5)
+        """Ouvre l'assistant en 4 étapes."""
+        def fini(larc, lancer):
+            self.verifier_fichiers_essentiels()
+            if lancer:
+                self.lancer_larc(larc)
+        EmulationWizard(self.root, icon_path=ICON_PATH, on_finished=fini, defaults={"auteur": AUTEUR})
 
     # ----------------------------------------------------------------------
     # Splash Screen (fade-in/out) puis lancement RÉEL d'emu293
@@ -349,61 +259,137 @@ class LexiARCApp:
         animer()
 
     def _lancer_emu293(self, fenetre, config):
-        """Lance réellement emu293.exe avec Lead.sys (bundlé) et l'image SD choisie."""
-        sd_path = config.get("image_sd_path", "")
-
-        if not EMU293_EXE.exists():
-            messagebox.showerror(
-                "emu293 introuvable",
-                f"L'exécutable emu293 est introuvable :\n{EMU293_EXE}\n\n"
-                "Place emu293.exe (+ les DLL mingw/SDL2/wx nécessaires) dans le dossier 'bin/' du package."
-            )
-            fenetre.destroy()
-            return
-        if not LEAD_SYS_PATH.exists():
-            messagebox.showerror(
-                "Lead.sys introuvable",
-                f"Le BIOS Lead.sys est introuvable :\n{LEAD_SYS_PATH}\n\n"
-                "Place-le dans 'core/windows/Lead.sys' du package."
-            )
-            fenetre.destroy()
-            return
-        if not sd_path or not os.path.exists(sd_path):
-            messagebox.showerror("Image SD introuvable", f"Image SD introuvable :\n{sd_path}")
-            fenetre.destroy()
-            return
-
-        try:
-            self.emu_process = subprocess.Popen(
-                [str(EMU293_EXE), str(LEAD_SYS_PATH), str(sd_path)],
-                cwd=str(EMU293_EXE.parent),
-            )
-        except Exception as e:
-            messagebox.showerror("Erreur de lancement", f"Impossible de lancer emu293 :\n{e}")
+        """Fenêtre d'émulation = console en direct : sortie d'emu293 (stdout+stderr) en temps réel,
+        statut, code de sortie expliqué, boutons Arrêter / Relancer / Copier / Dossier des logs."""
+        problemes = core.pre_launch_check(config)
+        if problemes:
+            messagebox.showerror("Lancement impossible", "\n\n".join("• " + p for p in problemes))
             fenetre.destroy()
             return
 
         for w in fenetre.winfo_children():
             w.destroy()
+        fenetre.configure(bg="#1e1e1e")
+        fenetre.geometry("820x540")
+        fenetre.resizable(True, True)
+        fenetre.minsize(560, 360)
 
-        info_text = (
-            f"Système : {config.get('nom_emulateur', 'Inconnu')}\n"
-            f"CPU : {config.get('architecture_cpu', 'N/A')} | RAM : {config.get('taille_ram', 'N/A')}\n"
-            f"SD : {os.path.basename(sd_path)}\n\n"
-            f"emu293 lancé (PID {self.emu_process.pid}).\n"
-            "La fenêtre de jeu s'ouvre séparément (SDL/wx).\n"
-            "Ferme-la normalement, ou utilise le bouton ci-dessous."
-        )
-        tk.Label(fenetre, text=info_text, fg="lime", bg="black",
-                 font=("Courier", 12), justify="left").pack(expand=True)
+        entete = (f"{config.get('nom_emulateur', 'Inconnu')}   |   "
+                  f"{config.get('architecture_cpu', 'N/A')}   |   RAM {config.get('taille_ram', 'N/A')}   |   "
+                  f"SD : {os.path.basename(str(config['_sd']))}")
+        tk.Label(fenetre, text=entete, fg="#9cdcfe", bg="#1e1e1e", font=("Courier", 10), anchor="w").pack(
+            fill="x", padx=8, pady=(8, 2))
+
+        # --- zone de log ---
+        cadre = tk.Frame(fenetre, bg="#1e1e1e")
+        cadre.pack(fill="both", expand=True, padx=8, pady=4)
+        txt = tk.Text(cadre, bg="#0c0c0c", fg="#d4d4d4", insertbackground="white", font=("Courier", 10),
+                      wrap="word", state="disabled", relief="flat")
+        sb = ttk.Scrollbar(cadre, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+        txt.tag_configure("erreur", foreground="#f48771")
+        txt.tag_configure("lexiarc", foreground="#6a9955")
+        txt.tag_configure("info", foreground="#dcdcaa")
+
+        statut = tk.Label(fenetre, text="", fg="lime", bg="#1e1e1e", font=("Courier", 10, "bold"), anchor="w")
+        statut.pack(fill="x", padx=8)
+
+        etat = {"session": None, "auto": tk.BooleanVar(value=True), "fini": False}
+
+        def ecrire(texte, tag=None):
+            txt.configure(state="normal")
+            for ligne in texte.splitlines(keepends=True):
+                t = tag
+                if t is None:
+                    bas = ligne.lower()
+                    if ligne.startswith("# LexiARC"):
+                        t = "lexiarc"
+                    elif any(m in bas for m in ("fail", "error", "erreur", "terminate", "cannot", "unable")):
+                        t = "erreur"
+                txt.insert("end", ligne, t) if t else txt.insert("end", ligne)
+            txt.configure(state="disabled")
+            if etat["auto"].get():
+                txt.see("end")
+
+        def demarrer():
+            txt.configure(state="normal")
+            txt.delete("1.0", "end")
+            txt.configure(state="disabled")
+            etat["fini"] = False
+            try:
+                etat["session"] = core.launch_emulation(config)
+            except Exception as e:
+                ecrire(f"Impossible de lancer emu293 : {e}\n", "erreur")
+                statut.config(text="■ Non lancé", fg="#f48771")
+                return
+            self.emu_process = etat["session"].proc
+            statut.config(text=f"● En cours (PID {self.emu_process.pid})", fg="lime")
+            btn_stop.config(state="normal")
+            btn_relance.config(state="disabled")
+            fenetre.after(100, lire)
+
+        def lire():
+            sess = etat["session"]
+            if sess is None or not fenetre.winfo_exists():
+                return
+            try:
+                while True:
+                    m = sess.q.get_nowait()
+                    if isinstance(m, tuple):          # ("exit", code)
+                        code = m[1]
+                        etat["fini"] = True
+                        sess.close()
+                        indice = core.explain_exit(code)
+                        ok = (code & 0xFFFFFFFF) == 0
+                        statut.config(text=f"■ Arrêté — code {code & 0xFFFFFFFF} (0x{code & 0xFFFFFFFF:08X})",
+                                      fg="lime" if ok else "#f48771")
+                        ecrire(f"\n[emu293 terminé, code {code & 0xFFFFFFFF}]\n", "info")
+                        if indice:
+                            ecrire(f"→ {indice}\n", "info")
+                        btn_stop.config(state="disabled")
+                        btn_relance.config(state="normal")
+                        return
+                    ecrire(m)
+            except Exception:
+                pass
+            fenetre.after(100, lire)
 
         def arreter():
-            if self.emu_process and self.emu_process.poll() is None:
-                self.emu_process.terminate()
+            if etat["session"]:
+                etat["session"].stop()
+
+        def copier():
+            fenetre.clipboard_clear()
+            fenetre.clipboard_append(txt.get("1.0", "end"))
+            statut.config(text=statut.cget("text") + "   (journal copié)")
+
+        def ouvrir_logs():
+            core.LOGS_DIR.mkdir(exist_ok=True)
+            try:
+                os.startfile(str(core.LOGS_DIR))
+            except AttributeError:
+                webbrowser.open(core.LOGS_DIR.as_uri())
+
+        def fermer():
+            arreter()
+            if etat["session"]:
+                etat["session"].close()
             fenetre.destroy()
 
-        ttk.Button(fenetre, text="Arrêter l'émulation", command=arreter).pack(pady=10)
-        fenetre.protocol("WM_DELETE_WINDOW", arreter)
+        barre = tk.Frame(fenetre, bg="#1e1e1e")
+        barre.pack(fill="x", padx=8, pady=8)
+        btn_stop = ttk.Button(barre, text="Arrêter", command=arreter)
+        btn_stop.pack(side="left")
+        btn_relance = ttk.Button(barre, text="Relancer", command=demarrer, state="disabled")
+        btn_relance.pack(side="left", padx=6)
+        ttk.Button(barre, text="Copier le journal", command=copier).pack(side="left")
+        ttk.Button(barre, text="Dossier des logs", command=ouvrir_logs).pack(side="left", padx=6)
+        ttk.Checkbutton(barre, text="Défilement auto", variable=etat["auto"]).pack(side="right")
+        fenetre.protocol("WM_DELETE_WINDOW", fermer)
+
+        demarrer()
 
     # ----------------------------------------------------------------------
     # Compilation : NON DISPONIBLE (voir en-tête du fichier / rapport chat)
@@ -429,9 +415,10 @@ class LexiARCApp:
     # Implémentation : copie RÉELLE d'un jeu sur l'image SD via mcopy
     # ----------------------------------------------------------------------
     def fenetre_creer_implementation(self):
+        """Implémentation : copier un fichier (ELF, WXN ou AUTRE) sur la carte SD, à l'endroit choisi."""
         win = tk.Toplevel(self.root)
         win.title("Créer une implémentation")
-        win.geometry("450x250")
+        win.geometry("520x270")
         win.resizable(False, False)
         if os.path.exists(ICON_PATH):
             try:
@@ -440,22 +427,24 @@ class LexiARCApp:
                 pass
         win.grab_set()
 
-        ttk.Label(win, text="Type de jeu :").grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        ttk.Label(win, text="Type de fichier :").grid(row=0, column=0, padx=10, pady=10, sticky="w")
         var_type = tk.StringVar(value="wxn")
         frame_type = ttk.Frame(win)
         frame_type.grid(row=0, column=1, padx=10, pady=10, sticky="w")
         ttk.Radiobutton(frame_type, text="ELF (.elf)", variable=var_type, value="elf").pack(side="left")
         ttk.Radiobutton(frame_type, text="WXN (.wxn)", variable=var_type, value="wxn").pack(side="left", padx=10)
+        ttk.Radiobutton(frame_type, text="Autre", variable=var_type, value="autre").pack(side="left")
 
-        ttk.Label(win, text="Fichier du jeu :").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+        ttk.Label(win, text="Fichier :").grid(row=1, column=0, padx=10, pady=10, sticky="w")
         var_fichier = tk.StringVar()
         frame_fichier = ttk.Frame(win)
         frame_fichier.grid(row=1, column=1, padx=10, pady=10, sticky="w")
-        ttk.Entry(frame_fichier, textvariable=var_fichier, width=25).pack(side="left")
+        ttk.Entry(frame_fichier, textvariable=var_fichier, width=34).pack(side="left")
 
         def parcourir_fichier():
-            ft = [("Fichier ELF", "*.elf")] if var_type.get() == "elf" else [("Fichier WXN", "*.wxn")]
-            f = filedialog.askopenfilename(filetypes=ft + [("Tous les fichiers", "*.*")])
+            t = var_type.get()
+            ft = {"elf": [("Fichier ELF", "*.elf")], "wxn": [("Fichier WXN", "*.wxn")]}.get(t, [])
+            f = filedialog.askopenfilename(parent=win, filetypes=ft + [("Tous les fichiers", "*.*")])
             if f:
                 var_fichier.set(f)
         ttk.Button(frame_fichier, text="...", width=3, command=parcourir_fichier).pack(side="left", padx=5)
@@ -464,61 +453,175 @@ class LexiARCApp:
         var_sd = tk.StringVar(value=self.chemin_carte_sd or "")
         frame_sd = ttk.Frame(win)
         frame_sd.grid(row=2, column=1, padx=10, pady=10, sticky="w")
-        ttk.Entry(frame_sd, textvariable=var_sd, width=25).pack(side="left")
+        ttk.Entry(frame_sd, textvariable=var_sd, width=34).pack(side="left")
         ttk.Button(frame_sd, text="...", width=3,
-                   command=lambda: var_sd.set(filedialog.askopenfilename(filetypes=[("Image SD", "*.img")]) or var_sd.get())
+                   command=lambda: var_sd.set(filedialog.askopenfilename(
+                       parent=win, filetypes=[("Image SD", "*.img"), ("Tous les fichiers", "*.*")]) or var_sd.get())
                    ).pack(side="left", padx=5)
+
+        ttk.Label(win, text="Étape suivante : tu choisis le dossier de la carte où déposer le fichier.",
+                  foreground="gray").grid(row=3, column=0, columnspan=2, padx=10, sticky="w")
 
         def commencer_implementation():
             if not var_fichier.get() or not var_sd.get():
-                messagebox.showerror("Erreur", "Veuillez sélectionner le fichier du jeu et la carte SD.")
+                messagebox.showerror("Erreur", "Veuillez sélectionner le fichier et la carte SD.", parent=win)
                 return
+            if not os.path.isfile(var_fichier.get()):
+                messagebox.showerror("Erreur", "Le fichier sélectionné est introuvable.", parent=win)
+                return
+            if not os.path.isfile(var_sd.get()):
+                messagebox.showerror("Erreur", "L'image de la carte SD est introuvable.", parent=win)
+                return
+            sd, fichier, type_ = var_sd.get(), var_fichier.get(), var_type.get()
             win.destroy()
-            self._implementer_jeu_reel(var_sd.get(), var_fichier.get())
+            self._implementer_jeu_reel(sd, fichier, type_)
 
-        ttk.Button(win, text="Commencer", command=commencer_implementation).grid(row=3, column=0, columnspan=2, pady=20)
+        ttk.Button(win, text="Choisir la destination…", command=commencer_implementation).grid(
+            row=4, column=0, columnspan=2, pady=18)
 
-    def _implementer_jeu_reel(self, sd_path, fichier):
-        if not MCOPY.exists():
-            messagebox.showerror("mtools introuvable", f"mcopy.exe introuvable :\n{MCOPY}")
+    def _choisir_destination_sd(self, sd_path, nom_fichier, type_):
+        """Sélecteur de dossier DANS l'image SD (via mdir). Retourne (dossier, nom) ou None."""
+        if core.list_sd_dir(sd_path, "::/") is None:
+            messagebox.showerror("Carte SD illisible",
+                                 "Impossible de lire cette image (FAT). Est-ce bien une carte SD formatée ?")
+            return None
+
+        win = tk.Toplevel(self.root)
+        win.title("Où déposer le fichier sur la carte SD ?")
+        win.geometry("560x470")
+        if os.path.exists(ICON_PATH):
+            try:
+                win.iconbitmap(ICON_PATH)
+            except Exception:
+                pass
+        win.transient(self.root)
+        win.grab_set()
+
+        # dossier de départ : Game Player pour elf/wxn s'il existe, sinon la racine
+        depart = "::/"
+        if type_ in ("elf", "wxn") and core.list_sd_dir(sd_path, "::/Fun/Game Player") is not None:
+            depart = "::/Fun/Game Player"
+
+        courant = tk.StringVar(value=depart)
+        var_nom = tk.StringVar(value=nom_fichier)
+        resultat = {"val": None}
+        contenu = {"dirs": [], "files": []}
+
+        ttk.Label(win, text="Dossier de destination :").pack(anchor="w", padx=10, pady=(10, 0))
+        ttk.Label(win, textvariable=courant, font=("Courier", 10, "bold")).pack(anchor="w", padx=10)
+
+        cadre = ttk.Frame(win)
+        cadre.pack(fill="both", expand=True, padx=10, pady=6)
+        liste = tk.Listbox(cadre, font=("Courier", 10), activestyle="none")
+        sb = ttk.Scrollbar(cadre, command=liste.yview)
+        liste.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        liste.pack(side="left", fill="both", expand=True)
+
+        def rafraichir():
+            res = core.list_sd_dir(sd_path, courant.get())
+            liste.delete(0, "end")
+            if res is None:
+                contenu["dirs"], contenu["files"] = [], []
+                liste.insert("end", "[Dossier illisible]")
+                return
+            contenu["dirs"], contenu["files"] = res
+            for d in res[0]:
+                liste.insert("end", "[DIR] " + d)
+            for f in res[1]:
+                liste.insert("end", "      " + f)
+                liste.itemconfig("end", foreground="gray")
+            if not res[0] and not res[1]:
+                liste.insert("end", "(dossier vide)")
+                liste.itemconfig("end", foreground="gray")
+
+        def ouvrir(event=None):
+            sel = liste.curselection()
+            if not sel or sel[0] >= len(contenu["dirs"]):
+                return
+            courant.set(core.sd_join(courant.get(), contenu["dirs"][sel[0]]))
+            rafraichir()
+
+        def remonter():
+            courant.set(core.sd_parent(courant.get()))
+            rafraichir()
+
+        def nouveau_dossier():
+            nom = simpledialog.askstring("Nouveau dossier", "Nom du dossier à créer ici :", parent=win)
+            if not nom or not nom.strip():
+                return
+            ok, err = core.make_sd_dir(sd_path, core.sd_join(courant.get(), nom.strip()))
+            if not ok:
+                messagebox.showerror("Création impossible", err, parent=win)
+            rafraichir()
+
+        liste.bind("<Double-Button-1>", ouvrir)
+
+        barre = ttk.Frame(win)
+        barre.pack(fill="x", padx=10)
+        ttk.Button(barre, text="⬆ Remonter", command=remonter).pack(side="left")
+        ttk.Button(barre, text="Ouvrir", command=ouvrir).pack(side="left", padx=6)
+        ttk.Button(barre, text="Nouveau dossier…", command=nouveau_dossier).pack(side="left")
+
+        ligne = ttk.Frame(win)
+        ligne.pack(fill="x", padx=10, pady=10)
+        ttk.Label(ligne, text="Nom sur la carte :").pack(side="left")
+        ttk.Entry(ligne, textvariable=var_nom, width=36).pack(side="left", padx=8)
+
+        def valider():
+            nom = var_nom.get().strip()
+            if not nom or any(c in nom for c in '/\\:*?"<>|'):
+                messagebox.showerror("Nom invalide", "Le nom du fichier est vide ou contient un caractère interdit.",
+                                     parent=win)
+                return
+            if nom.lower() in (f.lower() for f in contenu["files"]):
+                if not messagebox.askyesno("Fichier existant",
+                                           f"« {nom} » existe déjà dans ce dossier.\nLe remplacer ?", parent=win):
+                    return
+            resultat["val"] = (courant.get(), nom)
+            win.destroy()
+
+        bas = ttk.Frame(win)
+        bas.pack(fill="x", padx=10, pady=(0, 12))
+        ttk.Button(bas, text="Annuler", command=win.destroy).pack(side="left")
+        ttk.Button(bas, text="Copier ici ▶", command=valider).pack(side="right")
+
+        rafraichir()
+        self.root.wait_window(win)
+        return resultat["val"]
+
+    def _implementer_jeu_reel(self, sd_path, fichier, type_="autre"):
+        if not core.ensure_mtools():
+            messagebox.showerror("mtools introuvable", f"mtools introuvable :\n{core.MTOOLS_DIR}")
             return
 
-        dest_rel = simpledialog.askstring(
-            "Destination sur la carte",
-            "Chemin de destination dans l'image (ex: ::/Fun/Game Player/monjeu.wxn) :",
-            initialvalue=f"::/Fun/Game Player/{os.path.basename(fichier)}"
-        )
-        if not dest_rel:
+        choix = self._choisir_destination_sd(sd_path, os.path.basename(fichier), type_)
+        if not choix:
             return
+        dest_dir, nom = choix
 
         progress_win = tk.Toplevel(self.root)
         progress_win.title("Implémentation en cours...")
-        progress_win.geometry("400x100")
+        progress_win.geometry("420x100")
         progress_win.resizable(False, False)
         progress_win.grab_set()
-        ttk.Label(progress_win, text=f"Copie de {os.path.basename(fichier)} sur la carte SD...").pack(pady=10)
-        barre = ttk.Progressbar(progress_win, mode="indeterminate", length=350)
+        ttk.Label(progress_win, text=f"Copie de {os.path.basename(fichier)} vers {dest_dir.rstrip('/')}/{nom}…").pack(pady=10)
+        barre = ttk.Progressbar(progress_win, mode="indeterminate", length=370)
         barre.pack(pady=10)
         barre.start(10)
 
         def faire_copie():
             try:
-                result = subprocess.run(
-                    [str(MCOPY), "-i", sd_path, fichier, dest_rel],
-                    capture_output=True, text=True, timeout=60
-                )
-                ok = result.returncode == 0
-                err = (result.stderr or result.stdout or "").strip()
+                ok, err = core.copy_file_to_sd(sd_path, fichier, dest_dir, nom)
             except Exception as e:
-                ok = False
-                err = str(e)
+                ok, err = False, str(e)
 
             def finir():
                 barre.stop()
                 progress_win.destroy()
                 if ok:
                     messagebox.showinfo("Implémentation terminée",
-                                         f"{os.path.basename(fichier)} copié avec succès sur la carte SD.")
+                                        f"{nom} copié avec succès dans {dest_dir.rstrip('/')}/ sur la carte SD.")
                 else:
                     messagebox.showerror("Échec de la copie (mcopy)", err or "Erreur inconnue")
             self.root.after(0, finir)
@@ -691,7 +794,7 @@ class LexiARCApp:
         def faire_format():
             try:
                 result = subprocess.run(
-                    [str(MFORMAT), "-i", self.chemin_carte_sd, "::"],
+                    [str(MFORMAT), "-i", self.chemin_carte_sd, "-F", "-T", str(os.path.getsize(self.chemin_carte_sd) // 512), "::"],
                     capture_output=True, text=True, timeout=120
                 )
                 ok = result.returncode == 0
